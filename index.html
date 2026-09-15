@@ -1016,7 +1016,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v1.2</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v1.3</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme">
@@ -1028,21 +1028,9 @@ tbody td{
         </span>
       </button>
       <button id="refreshBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Refresh / reset page" title="Refresh / reset page">&#x27F3;</button>
-      <div class="menu-wrap">
-        <button id="menuBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-haspopup="true" aria-expanded="false" aria-label="Menu">&#9776;</button>
-        <div id="menuDropdown" class="menu-dropdown" hidden>
-          <button id="importBtn" type="button" class="import-btn menu-item">Import New Links</button>
-          <div class="menu-divider" data-label="Database file"></div>
-          <button id="dbConnectBtn" type="button" class="import-btn menu-item">Open DB File</button>
-          <button id="dbNewBtn" type="button" class="import-btn menu-item">New DB File</button>
-          <button id="reconnectDbBtn" type="button" class="import-btn menu-item" hidden>Reconnect DB File</button>
-          <input type="file" id="dbImportInput" accept=".sqlite,.db" hidden>
-          <button id="dbImportBtn" type="button" class="import-btn menu-item">Import DB (.sqlite)</button>
-          <button id="dbExportBtn" type="button" class="import-btn menu-item">Export DB (.sqlite)</button>
-          <div class="menu-divider" data-label="Maintenance"></div>
-          <button id="cleanupBtn" type="button" class="import-btn menu-item">Cleanup Media Files</button>
-        </div>
-      </div>
+      <button id="importBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Import new links" title="Import new links">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M12 3.5v11m0 0-4-4m4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 16.5v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
     </div>
   </div>
 </div>
@@ -1569,6 +1557,15 @@ document.addEventListener('DOMContentLoaded', function(){
     sb.from('post_category').delete().eq('post_id', postId).then(logSbError);
     sb.from('post_notes').delete().eq('post_id', postId).then(logSbError);
     sb.from('posts').delete().eq('post_id', postId).then(logSbError);
+    delete imageCache[postId];
+    // Also remove the purged link's screenshot from GitHub (images/<id>.jpg),
+    // via the same Edge Function "Renew" uses — the GitHub write token only
+    // lives server-side, so deleting the file has to go through it too.
+    sb.functions.invoke('renew-image', { body: { id: postId, action: 'delete' } }).then(function(res){
+      if (res.error){
+        setImportStatus('Purged, but could not remove its image from GitHub: ' + res.error.message, 'error');
+      }
+    });
     persistDb();
   }
 
@@ -1767,36 +1764,6 @@ document.addEventListener('DOMContentLoaded', function(){
   });
 
   initTheme();
-
-  /* ---------- Hamburger menu ---------- */
-  var menuBtn = document.getElementById('menuBtn');
-  var menuDropdown = document.getElementById('menuDropdown');
-
-  function closeMenu(){
-    menuDropdown.hidden = true;
-    menuBtn.setAttribute('aria-expanded', 'false');
-  }
-  function openMenu(){
-    menuDropdown.hidden = false;
-    menuBtn.setAttribute('aria-expanded', 'true');
-  }
-
-  menuBtn.addEventListener('click', function(e){
-    e.stopPropagation();
-    if (menuDropdown.hidden) openMenu(); else closeMenu();
-  });
-  menuDropdown.addEventListener('click', function(e){
-    e.stopPropagation();
-    if (e.target.closest('button')) closeMenu();
-  });
-  document.addEventListener('click', function(e){
-    if (!menuDropdown.hidden && e.target !== menuBtn && !menuDropdown.contains(e.target)){
-      closeMenu();
-    }
-  });
-  document.addEventListener('keydown', function(e){
-    if (e.key === 'Escape') closeMenu();
-  });
 
   /* ---------- Import New Links (paste one URL per line) ---------- */
   var importBtn = document.getElementById('importBtn');
@@ -2061,15 +2028,6 @@ document.addEventListener('DOMContentLoaded', function(){
     downloadTextFile('links_export.json', JSON.stringify(exportArray, null, 2));
   });
 
-  /* ---------- Legacy local-.sqlite-file menu ----------
-     v1.0 stores everything in Supabase, so connect/new/reconnect/import/
-     export of a local database file no longer apply — these buttons are
-     hidden rather than removed from the HTML, to keep this diff small. */
-  ['dbConnectBtn', 'dbNewBtn', 'reconnectDbBtn', 'dbImportBtn', 'dbExportBtn'].forEach(function(id){
-    var el = document.getElementById(id);
-    if (el) el.hidden = true;
-  });
-
   /* ---------- Category management modal ---------- */
   var categoryModalOverlay = document.getElementById('categoryModalOverlay');
   var manageCategoriesBtn = document.getElementById('manageCategoriesBtn');
@@ -2240,13 +2198,6 @@ document.addEventListener('DOMContentLoaded', function(){
   newCategoryNameInput.addEventListener('keydown', function(e){
     if (e.key === 'Enter') addCategoryBtn.click();
   });
-
-  /* ---------- Cleanup orphaned files ----------
-     Removed in v1.0: this scanned a local media folder via the File
-     System Access API, which no longer applies now that images live in
-     the GitHub repo (see renewLinkImage). The trigger button is hidden. */
-  var cleanupBtnEl = document.getElementById('cleanupBtn');
-  if (cleanupBtnEl) cleanupBtnEl.hidden = true;
 
 
   /* ---------- Refresh (reset to a freshly loaded page) ---------- */
