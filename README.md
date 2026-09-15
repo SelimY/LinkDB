@@ -1,6 +1,6 @@
 # LinkDB
 
-A single-file, offline-first link archive/manager. Open `linkdb.html` directly
+A single-file, offline-first link archive/manager. Open `index.html` directly
 in a browser — no server, no build step, no external dependencies. Data is
 stored in a local SQLite database (via sql.js) that you connect to or export
 from the app itself.
@@ -15,7 +15,7 @@ from the app itself.
 
 ## Usage
 
-1. Download [`linkdb.html`](./linkdb.html)
+1. Download [`index.html`](./index.html)
 2. Open it in a Chromium-based browser (Chrome/Edge — needed for the File
    System Access API used to connect/save a local `.sqlite` file)
 3. Use the menu (☰) to open or create a database file
