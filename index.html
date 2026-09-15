@@ -442,7 +442,13 @@ tbody td{
 .url-cell-top{ display:flex; align-items:flex-start; gap:6px; }
 .url-cell-top .url-domain{ flex:1; }
 .url-id-value{ opacity:.7; }
-.title-cell{ display:flex; align-items:flex-start; gap:6px; }
+.title-cell{
+  display:flex; align-items:flex-start; gap:6px;
+  max-height:250px; overflow-y:auto;
+  scrollbar-width:thin;
+}
+.title-cell::-webkit-scrollbar{ width:6px; }
+.title-cell::-webkit-scrollbar-thumb{ background:var(--border); border-radius:3px; }
 .title-text{ font-size:13.5px; color:var(--text); word-break:break-word; flex:1; }
 .title-edit-btn, .url-edit-btn{
   flex:0 0 auto;
@@ -505,7 +511,7 @@ tbody td{
 .labels-empty{ color:var(--muted); font-size:13px; opacity:.55; }
 
 .notes-cell{
-  height:100%;
+  max-height:250px;
   overflow-y:auto;
   padding-right:6px;
   white-space:pre-wrap;
@@ -685,7 +691,13 @@ tbody td{
 /* ============================================================
    Tags
    ============================================================ */
-.cat-tags-cell{ display:flex; flex-direction:column; gap:8px; height:100%; }
+.cat-tags-cell{
+  display:flex; flex-direction:column; gap:8px;
+  max-height:250px; overflow-y:auto;
+  scrollbar-width:thin;
+}
+.cat-tags-cell::-webkit-scrollbar{ width:6px; }
+.cat-tags-cell::-webkit-scrollbar-thumb{ background:var(--border); border-radius:3px; }
 .cat-tags-category{ display:flex; }
 .labels-cell{
   display:flex; flex-wrap:wrap; align-items:flex-start; align-content:flex-start; gap:5px;
@@ -1018,7 +1030,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.2</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.3</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
