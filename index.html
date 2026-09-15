@@ -1669,7 +1669,8 @@ document.addEventListener('DOMContentLoaded', function(){
   signInOverlay.innerHTML =
     '<div style="display:flex;flex-direction:column;align-items:center;gap:16px;">' +
     '<div class="init-loading-text">Sign in to LinkDB</div>' +
-    '<button id="googleSignInBtn" style="font:600 15px/1 Inter,sans-serif;padding:12px 22px;border-radius:8px;border:none;background:#FF4B3E;color:#fff;cursor:pointer;">Sign in with Google</button>' +
+    '<button id="googleSignInBtn" type="button" style="font:600 15px/1 Inter,sans-serif;padding:12px 22px;border-radius:8px;border:none;background:#FF4B3E;color:#fff;cursor:pointer;">Sign in with Google</button>' +
+    '<div id="signInError" class="init-loading-text" style="color:#FF4B3E;max-width:320px;text-align:center;"></div>' +
     '</div>';
   signInOverlay.hidden = true;
   document.body.appendChild(signInOverlay);
@@ -1677,8 +1678,33 @@ document.addEventListener('DOMContentLoaded', function(){
   function showSignIn(){
     initialLoadingOverlay.hidden = true;
     signInOverlay.hidden = false;
-    document.getElementById('googleSignInBtn').addEventListener('click', function(){
-      sb.auth.signInWithOAuth({ provider: 'google' });
+    var btn = document.getElementById('googleSignInBtn');
+    var errEl = document.getElementById('signInError');
+    btn.addEventListener('click', function(){
+      errEl.textContent = '';
+      btn.disabled = true;
+      btn.textContent = 'Redirecting…';
+      // Explicit redirectTo: without it, Supabase falls back to whatever
+      // "Site URL" is configured in the dashboard, which silently does
+      // nothing visible here if it doesn't match the page actually open.
+      var redirectTo = window.location.origin + window.location.pathname;
+      sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: redirectTo } })
+        .then(function(res){
+          if (res && res.error){
+            console.error('Google sign-in error:', res.error);
+            errEl.textContent = 'Sign-in failed: ' + res.error.message;
+            btn.disabled = false;
+            btn.textContent = 'Sign in with Google';
+          }
+          // On success, signInWithOAuth navigates the browser away itself —
+          // nothing else to do here.
+        })
+        .catch(function(err){
+          console.error('Google sign-in threw:', err);
+          errEl.textContent = 'Sign-in failed: ' + (err && err.message ? err.message : err);
+          btn.disabled = false;
+          btn.textContent = 'Sign in with Google';
+        });
     });
   }
 
