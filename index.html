@@ -1016,7 +1016,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v1.3</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v1.4</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme">
@@ -1427,12 +1427,23 @@ document.addEventListener('DOMContentLoaded', function(){
     var toFix = [];
     POSTS_RAW.forEach(function(p){
       if (!(p.post_id in POST_CATEGORY)){
-        POST_CATEGORY[p.post_id] = catId;
-        toFix.push({ post_id: p.post_id, category_id: catId });
+        toFix.push(p.post_id);
       }
     });
+    // Safety net: this is meant to repair a handful of stragglers (a newly
+    // imported link, say), never to bulk-reassign the whole database. If
+    // it looks like most/all posts are "missing" a category, something
+    // upstream went wrong (e.g. post_category didn't finish loading yet)
+    // -- skip silently overwriting everyone's category and surface it
+    // instead, rather than repeat the bug that once reset every post to
+    // "*New" in Supabase.
+    if (POSTS_RAW.length > 5 && toFix.length > Math.ceil(POSTS_RAW.length * 0.5)){
+      setImportStatus('Category data looks incomplete (' + toFix.length + '/' + POSTS_RAW.length + ' posts missing a category) -- skipped auto-repair to avoid overwriting real assignments. Try reloading.', 'error');
+      return;
+    }
+    toFix.forEach(function(postId){ POST_CATEGORY[postId] = catId; });
     if (toFix.length){
-      sb.from('post_category').upsert(toFix).then(logSbError);
+      sb.from('post_category').upsert(toFix.map(function(postId){ return { post_id: postId, category_id: catId }; })).then(logSbError);
     }
   }
 
@@ -3239,7 +3250,19 @@ document.addEventListener('DOMContentLoaded', function(){
   /* ---------- Init ---------- */
   setAllControlsDisabled(true); // stays locked until the table has fully rendered
 
+  var bootedOnce = false;
   function boot(){
+    // Guard against boot() running twice concurrently -- it used to be
+    // called both unconditionally here AND from onAuthStateChange's
+    // 'SIGNED_IN' event (which fires right after the Google OAuth
+    // redirect completes), and if both ran at once, two overlapping
+    // loadAllFromSupabase() calls could race: one call's in-progress
+    // POST_CATEGORY reset could still be empty when the OTHER call's
+    // assignMissingCategoriesToNew() ran, making it think every post
+    // was missing a category and bulk-overwriting all of them to
+    // "*New" in Supabase. Booting exactly once eliminates that race.
+    if (bootedOnce) return;
+    bootedOnce = true;
     setImportStatus('Connecting to Supabase…');
     initDatabase().then(function(){
       refreshPostsFromDB();
@@ -3256,19 +3279,19 @@ document.addEventListener('DOMContentLoaded', function(){
       }
       setDbStatus('Connected to Supabase' + (currentUser ? ' as ' + currentUser.email : '') + '.', 'ok');
     }).catch(function(err){
-      if (err && err.message === 'not-signed-in') return; // sign-in overlay is already showing
+      if (err && err.message === 'not-signed-in'){
+        bootedOnce = false; // not actually booted -- let a later SIGNED_IN event try again
+        return; // sign-in overlay is already showing
+      }
       setImportStatus('Database initialization failed: ' + (err && err.message ? err.message : err), 'error');
       setAllControlsDisabled(false);
       initialLoadingOverlay.hidden = true;
+      bootedOnce = false; // allow a retry (e.g. after the user signs in)
     });
   }
 
-  var bootedOnce = false;
   sb.auth.onAuthStateChange(function(event){
-    if (event === 'SIGNED_IN' && !bootedOnce){
-      bootedOnce = true;
-      boot();
-    }
+    if (event === 'SIGNED_IN') boot();
   });
   boot();
 
