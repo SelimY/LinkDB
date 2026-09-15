@@ -1017,7 +1017,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.0</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.1</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
@@ -1029,7 +1029,7 @@ tbody td{
         </span>
       </button>
       <button id="refreshBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Refresh / reset page" title="Refresh / reset page" data-always-enabled>&#x27F3;</button>
-      <button id="importBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Import new links" title="Import new links">
+      <button id="importBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Import new links" title="Import new links" hidden>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M12 3.5v11m0 0-4-4m4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 16.5v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <button id="logoutBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Sign out" title="Sign out" data-always-enabled hidden>&#x23FB;</button>
@@ -1717,6 +1717,8 @@ document.addEventListener('DOMContentLoaded', function(){
     signInOverlay.hidden = false;
     var logoutBtnEl = document.getElementById('logoutBtn');
     if (logoutBtnEl) logoutBtnEl.hidden = true;
+    var importBtnEl = document.getElementById('importBtn');
+    if (importBtnEl) importBtnEl.hidden = true;
     var btn = document.getElementById('googleSignInBtn');
     var errEl = document.getElementById('signInError');
     btn.addEventListener('click', function(){
@@ -3324,6 +3326,7 @@ document.addEventListener('DOMContentLoaded', function(){
       }
       setDbStatus('Connected to Supabase' + (currentUser ? ' as ' + currentUser.email : '') + '.', 'ok');
       logoutBtn.hidden = false;
+      importBtn.hidden = false;
     }).catch(function(err){
       if (err && err.message === 'not-signed-in'){
         bootedOnce = false; // not actually booted -- let a later SIGNED_IN event try again
