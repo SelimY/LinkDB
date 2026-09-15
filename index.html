@@ -1016,7 +1016,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v1.5</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v1.6</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme">
@@ -1365,6 +1365,26 @@ document.addEventListener('DOMContentLoaded', function(){
     return res;
   }
 
+  /* supabase-js's functions.invoke() gives a generic "Edge Function
+     returned a non-2xx status code" message on failure -- the actual
+     { error: "..." } body our own function sends back is only reachable
+     via error.context (the raw fetch Response), and has to be read
+     asynchronously. This pulls that real message out, falling back to
+     the generic one if the body isn't there or isn't JSON. */
+  function functionErrorMessage(err){
+    if (!err) return 'Unknown error';
+    if (err.context && typeof err.context.text === 'function'){
+      return err.context.clone().json().then(function(body){
+        return (body && body.error) ? body.error : err.message;
+      }).catch(function(){
+        return err.context.clone().text().then(function(text){
+          return text || err.message;
+        }).catch(function(){ return err.message; });
+      });
+    }
+    return Promise.resolve(err.message || String(err));
+  }
+
   function nextLocalId(rows, idField){
     var max = 0;
     rows.forEach(function(r){ if (r[idField] > max) max = r[idField]; });
@@ -1574,7 +1594,9 @@ document.addEventListener('DOMContentLoaded', function(){
     // lives server-side, so deleting the file has to go through it too.
     sb.functions.invoke('renew-image', { body: { id: postId, action: 'delete' } }).then(function(res){
       if (res.error){
-        setImportStatus('Purged, but could not remove its image from GitHub: ' + res.error.message, 'error');
+        functionErrorMessage(res.error).then(function(msg){
+          setImportStatus('Purged, but could not remove its image from GitHub: ' + msg, 'error');
+        });
       }
     });
     persistDb();
@@ -2011,7 +2033,9 @@ document.addEventListener('DOMContentLoaded', function(){
     }).catch(function(err){
       btn.textContent = 'Failed';
       setTimeout(function(){ btn.textContent = originalLabel; btn.disabled = false; }, 1800);
-      setImportStatus('Could not renew image for ' + post.pid + ': ' + (err && err.message ? err.message : err), 'error');
+      functionErrorMessage(err).then(function(msg){
+        setImportStatus('Could not renew image for ' + post.pid + ': ' + msg, 'error');
+      });
     });
   }
 
