@@ -1030,7 +1030,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.8</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.9</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
@@ -1401,6 +1401,28 @@ document.addEventListener('DOMContentLoaded', function(){
     return res;
   }
 
+  /* ---------- Debug logging for tag/category CRUD ----------
+     Every add/rename/delete for tags and categories logs its inputs, its
+     decision (what it's about to do and why), and the Supabase response
+     once it comes back -- prefixed '[LinkDB]' so it's easy to filter in
+     devtools. This is a debugging aid, not a feature; safe to leave on. */
+  function dlog(){
+    var args = Array.prototype.slice.call(arguments);
+    args.unshift('[LinkDB]');
+    console.log.apply(console, args);
+  }
+  function dlogWrite(label, table, payload, promise){
+    dlog(label, '-> Supabase', table, payload);
+    return promise.then(function(res){
+      if (res && res.error){
+        dlog(label, '<- FAILED', table, res.error);
+      } else {
+        dlog(label, '<- OK', table, res && res.status, res && res.statusText);
+      }
+      return res;
+    });
+  }
+
   /* supabase-js's functions.invoke() gives a generic "Edge Function
      returned a non-2xx status code" message on failure -- the actual
      { error: "..." } body our own function sends back is only reachable
@@ -1497,6 +1519,7 @@ document.addEventListener('DOMContentLoaded', function(){
         toFix.push(p.post_id);
       }
     });
+    dlog('assignMissingCategoriesToNew:', toFix.length, 'of', POSTS_RAW.length, 'posts missing a category');
     // Safety net: this is meant to repair a handful of stragglers (a newly
     // imported link, say), never to bulk-reassign the whole database. If
     // it looks like most/all posts are "missing" a category, something
@@ -1505,6 +1528,7 @@ document.addEventListener('DOMContentLoaded', function(){
     // instead, rather than repeat the bug that once reset every post to
     // "*New" in Supabase.
     if (POSTS_RAW.length > 5 && toFix.length > Math.ceil(POSTS_RAW.length * 0.5)){
+      dlog('assignMissingCategoriesToNew: SAFETY NET TRIGGERED -- skipping auto-repair, this looks like incomplete data rather than real orphans');
       setImportStatus('Category data looks incomplete (' + toFix.length + '/' + POSTS_RAW.length + ' posts missing a category) -- skipped auto-repair to avoid overwriting real assignments. Try reloading.', 'error');
       return;
     }
@@ -1568,6 +1592,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
   function addTagToPost(postId, rawTag){
     var candidate = normalizeTag(rawTag);
+    dlog('addTagToPost called', { postId: postId, rawTag: rawTag, normalized: candidate });
     if (!candidate) return null;
     var existing = TAGS.filter(function(t){ return t.name.toLowerCase() === candidate.toLowerCase(); })[0];
     var tagId, canonicalName, tagIsNew = false;
@@ -1588,16 +1613,28 @@ document.addEventListener('DOMContentLoaded', function(){
       // race -- if post_tags reached Postgres before the tags row it
       // references had committed, the foreign key check failed with
       // "violates foreign key constraint post_tags_tag_id_fkey".
+      dlog('addTagToPost: creating new tag', { tag_id: tagId, name: canonicalName });
       TAGS.push({ tag_id: tagId, name: canonicalName, usage_count: 1 });
       POST_TAGS.push({ post_id: postId, tag_id: tagId });
-      sbWrite('tags').insert({ tag_id: tagId, name: canonicalName, usage_count: 1 }).then(logSbError).then(function(){
-        sbWrite('post_tags').insert({ post_id: postId, tag_id: tagId }).then(logSbError);
+      dlogWrite('addTagToPost (new tag)', 'tags', { tag_id: tagId, name: canonicalName, usage_count: 1 },
+        sbWrite('tags').insert({ tag_id: tagId, name: canonicalName, usage_count: 1 })
+      ).then(logSbError).then(function(){
+        dlogWrite('addTagToPost (link post)', 'post_tags', { post_id: postId, tag_id: tagId },
+          sbWrite('post_tags').insert({ post_id: postId, tag_id: tagId })
+        ).then(logSbError);
       });
     } else if (!already){
+      dlog('addTagToPost: linking post', postId, 'to existing tag', existing);
       POST_TAGS.push({ post_id: postId, tag_id: tagId });
       existing.usage_count = (existing.usage_count || 0) + 1;
-      sbWrite('post_tags').insert({ post_id: postId, tag_id: tagId }).then(logSbError);
-      sbWrite('tags').update({ usage_count: existing.usage_count }).eq('tag_id', tagId).then(logSbError);
+      dlogWrite('addTagToPost (link post)', 'post_tags', { post_id: postId, tag_id: tagId },
+        sbWrite('post_tags').insert({ post_id: postId, tag_id: tagId })
+      ).then(logSbError);
+      dlogWrite('addTagToPost (bump usage_count)', 'tags', { tag_id: tagId, usage_count: existing.usage_count },
+        sbWrite('tags').update({ usage_count: existing.usage_count }).eq('tag_id', tagId)
+      ).then(logSbError);
+    } else {
+      dlog('addTagToPost: post already has this tag, no-op', postId, canonicalName);
     }
     var post = postsById[postId];
     if (post && post.tags.indexOf(canonicalName) === -1) post.tags.push(canonicalName);
@@ -1606,16 +1643,27 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 
   function removeTagFromPost(postId, tagName){
+    dlog('removeTagFromPost called', { postId: postId, tagName: tagName });
     var tag = TAGS.filter(function(t){ return t.name.toLowerCase() === String(tagName).toLowerCase(); })[0];
-    if (!tag) return;
+    if (!tag){
+      dlog('removeTagFromPost: rejected, tag not found', tagName);
+      return;
+    }
     POST_TAGS = POST_TAGS.filter(function(pt){ return !(pt.post_id === postId && pt.tag_id === tag.tag_id); });
-    sbWrite('post_tags').delete().eq('post_id', postId).eq('tag_id', tag.tag_id).then(logSbError);
+    dlogWrite('removeTagFromPost (unlink)', 'post_tags', { post_id: postId, tag_id: tag.tag_id },
+      sbWrite('post_tags').delete().eq('post_id', postId).eq('tag_id', tag.tag_id)
+    ).then(logSbError);
     tag.usage_count = Math.max(0, (tag.usage_count || 0) - 1);
     if (tag.usage_count <= 0){
+      dlog('removeTagFromPost: usage_count hit 0, deleting tag', tag);
       TAGS = TAGS.filter(function(t){ return t.tag_id !== tag.tag_id; });
-      sbWrite('tags').delete().eq('tag_id', tag.tag_id).then(logSbError);
+      dlogWrite('removeTagFromPost (delete tag)', 'tags', { tag_id: tag.tag_id },
+        sbWrite('tags').delete().eq('tag_id', tag.tag_id)
+      ).then(logSbError);
     } else {
-      sbWrite('tags').update({ usage_count: tag.usage_count }).eq('tag_id', tag.tag_id).then(logSbError);
+      dlogWrite('removeTagFromPost (decrement usage_count)', 'tags', { tag_id: tag.tag_id, usage_count: tag.usage_count },
+        sbWrite('tags').update({ usage_count: tag.usage_count }).eq('tag_id', tag.tag_id)
+      ).then(logSbError);
     }
     var post = postsById[postId];
     if (post) post.tags = post.tags.filter(function(t){ return t.toLowerCase() !== String(tagName).toLowerCase(); });
@@ -1677,8 +1725,12 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 
   function deleteCategory(name){
+    dlog('deleteCategory called', name);
     var cat = CATEGORIES.filter(function(c){ return c.name === name; })[0];
-    if (!cat) return;
+    if (!cat){
+      dlog('deleteCategory: rejected, name not found', name);
+      return;
+    }
     var newId = ensureNewCategory();
     var moved = [];
     Object.keys(POST_CATEGORY).forEach(function(pid){
@@ -1687,28 +1739,50 @@ document.addEventListener('DOMContentLoaded', function(){
         moved.push({ post_id: pid, category_id: newId });
       }
     });
+    dlog('deleteCategory: moving', moved.length, 'post(s) to *New (id', newId, ') then deleting category', cat);
     CATEGORIES = CATEGORIES.filter(function(c){ return c.category_id !== cat.category_id; });
-    if (moved.length) sbWrite('post_category').upsert(moved).then(logSbError);
-    sbWrite('categories').delete().eq('category_id', cat.category_id).then(logSbError);
+    if (moved.length){
+      dlogWrite('deleteCategory (reassign)', 'post_category', moved, sbWrite('post_category').upsert(moved)).then(logSbError);
+    }
+    dlogWrite('deleteCategory (delete row)', 'categories', { category_id: cat.category_id },
+      sbWrite('categories').delete().eq('category_id', cat.category_id)
+    ).then(logSbError);
     persistDb();
   }
 
   function renameCategory(oldName, newName){
     var trimmed = String(newName || '').trim();
-    if (!trimmed) return { ok: false, reason: 'empty' };
-    if (trimmed === oldName) return { ok: false, reason: 'unchanged' };
+    dlog('renameCategory called', { oldName: oldName, newNameRaw: newName, trimmed: trimmed });
+    if (!trimmed){
+      dlog('renameCategory: rejected, empty new name');
+      return { ok: false, reason: 'empty' };
+    }
+    if (trimmed === oldName){
+      dlog('renameCategory: rejected, unchanged (trimmed === oldName)');
+      return { ok: false, reason: 'unchanged' };
+    }
     var exists = CATEGORIES.some(function(c){ return c.name === trimmed; });
-    if (exists) return { ok: false, reason: 'duplicate' };
+    if (exists){
+      dlog('renameCategory: rejected, duplicate name already exists', trimmed);
+      return { ok: false, reason: 'duplicate' };
+    }
     var cat = CATEGORIES.filter(function(c){ return c.name === oldName; })[0];
-    if (!cat) return { ok: false, reason: 'missing' };
+    if (!cat){
+      dlog('renameCategory: rejected, oldName not found in in-memory CATEGORIES', oldName, 'current CATEGORIES:', CATEGORIES.map(function(c){ return c.name; }));
+      return { ok: false, reason: 'missing' };
+    }
+    dlog('renameCategory: updating in-memory row', cat, '-> name:', trimmed);
     cat.name = trimmed;
-    sbWrite('categories').update({ name: trimmed }).eq('category_id', cat.category_id).then(logSbError);
+    dlogWrite('renameCategory', 'categories', { category_id: cat.category_id, name: trimmed },
+      sbWrite('categories').update({ name: trimmed }).eq('category_id', cat.category_id)
+    ).then(logSbError);
     persistDb();
     return { ok: true };
   }
 
   function assignCategoryInline(postId, categoryName){
     categoryName = String(categoryName || '').trim();
+    dlog('assignCategoryInline called', { postId: postId, categoryName: categoryName });
     if (!categoryName) return null;
     var exists = CATEGORIES.some(function(c){ return c.name === categoryName; });
     var cat;
@@ -1717,25 +1791,36 @@ document.addEventListener('DOMContentLoaded', function(){
       cat = { category_id: catId, name: categoryName, default_visible: 1 };
       CATEGORIES.push(cat);
       POST_CATEGORY[postId] = cat.category_id;
+      dlog('assignCategoryInline: creating new category', cat, 'and linking post', postId);
       // Same ordering fix as addTagToPost: don't link the post to a
       // brand-new category until that category's own insert has actually
       // committed, or post_category's foreign key check can fail.
-      sbWrite('categories').insert({ category_id: catId, name: categoryName, default_visible: true }).then(logSbError).then(function(){
-        sbWrite('post_category').upsert({ post_id: postId, category_id: cat.category_id }).then(logSbError);
+      dlogWrite('assignCategoryInline (new category)', 'categories', { category_id: catId, name: categoryName },
+        sbWrite('categories').insert({ category_id: catId, name: categoryName, default_visible: true })
+      ).then(logSbError).then(function(){
+        dlogWrite('assignCategoryInline (link post)', 'post_category', { post_id: postId, category_id: cat.category_id },
+          sbWrite('post_category').upsert({ post_id: postId, category_id: cat.category_id })
+        ).then(logSbError);
       });
     } else {
       cat = CATEGORIES.filter(function(c){ return c.name === categoryName; })[0];
       POST_CATEGORY[postId] = cat.category_id;
-      sbWrite('post_category').upsert({ post_id: postId, category_id: cat.category_id }).then(logSbError);
+      dlog('assignCategoryInline: linking post', postId, 'to existing category', cat);
+      dlogWrite('assignCategoryInline (link post)', 'post_category', { post_id: postId, category_id: cat.category_id },
+        sbWrite('post_category').upsert({ post_id: postId, category_id: cat.category_id })
+      ).then(logSbError);
     }
     persistDb();
     return categoryName;
   }
 
   function unassignPostCategory(postId){
+    dlog('unassignPostCategory called', postId);
     var newId = ensureNewCategory();
     POST_CATEGORY[postId] = newId;
-    sbWrite('post_category').upsert({ post_id: postId, category_id: newId }).then(logSbError);
+    dlogWrite('unassignPostCategory', 'post_category', { post_id: postId, category_id: newId },
+      sbWrite('post_category').upsert({ post_id: postId, category_id: newId })
+    ).then(logSbError);
     persistDb();
   }
 
@@ -1821,6 +1906,7 @@ document.addEventListener('DOMContentLoaded', function(){
   function initDatabase(){
     return sb.auth.getSession().then(function(res){
       var session = res.data && res.data.session;
+      dlog('initDatabase: getSession() ->', session ? ('signed in as ' + session.user.email) : 'no session');
       if (!session || !session.user || session.user.email !== ALLOWED_EMAIL){
         showSignIn();
         return Promise.reject(new Error('not-signed-in'));
@@ -1829,6 +1915,9 @@ document.addEventListener('DOMContentLoaded', function(){
       signInOverlay.hidden = true;
       return loadAllFromSupabase();
     }).then(function(){
+      dlog('initDatabase: loadAllFromSupabase() done --',
+        CATEGORIES.length, 'categories,', TAGS.length, 'tags,', POSTS_RAW.length, 'posts,',
+        Object.keys(POST_CATEGORY).length, 'post_category rows');
       if (!getMeta('schema_version')) setMeta('schema_version', '5');
       loadCategoriesFromDb();
       cleanupZeroUsageTags();
@@ -2226,6 +2315,7 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 
   function renderCategoryManageList(){
+    dlog('renderCategoryManageList: re-rendering (destroys any in-progress edit in this modal)');
     var countByCat = {};
     Object.keys(POST_CATEGORY).forEach(function(pid){
       var cid = POST_CATEGORY[pid];
@@ -2266,6 +2356,7 @@ document.addEventListener('DOMContentLoaded', function(){
   categoryManageListEl.addEventListener('keydown', function(e){
     if (e.key !== 'Enter') return;
     if (e.target.classList.contains('cat-name-input')){
+      dlog('cat-name-input: Enter pressed, current value =', JSON.stringify(e.target.value), '-- forcing blur to commit');
       // Text inputs only fire 'change' on blur, not on Enter -- force it
       // so Enter commits the rename the same way clicking away does.
       e.preventDefault();
@@ -2275,14 +2366,19 @@ document.addEventListener('DOMContentLoaded', function(){
 
   categoryManageListEl.addEventListener('change', function(e){
     var row = e.target.closest('.cat-manage-row');
-    if (!row) return;
+    if (!row){
+      dlog('cat-manage change event: no .cat-manage-row ancestor found for target', e.target);
+      return;
+    }
     var name = row.getAttribute('data-name');
 
     if (e.target.classList.contains('cat-visible-toggle')){
       var cat = CATEGORIES.filter(function(c){ return c.name === name; })[0];
       if (cat){
         cat.default_visible = e.target.checked ? 1 : 0;
-        sbWrite('categories').update({ default_visible: !!e.target.checked }).eq('category_id', cat.category_id).then(logSbError);
+        dlogWrite('cat-visible-toggle', 'categories', { category_id: cat.category_id, default_visible: !!e.target.checked },
+          sbWrite('categories').update({ default_visible: !!e.target.checked }).eq('category_id', cat.category_id)
+        ).then(logSbError);
       }
       persistDb();
       setCategoryModalStatus('Updated default visibility for "' + name + '" (applies to new sessions).', 'ok');
@@ -2290,7 +2386,9 @@ document.addEventListener('DOMContentLoaded', function(){
     }
 
     if (e.target.classList.contains('cat-name-input')){
+      dlog('cat-name-input: change event fired, row data-name =', name, ', input value =', JSON.stringify(e.target.value));
       var result = renameCategory(name, e.target.value);
+      dlog('cat-name-input: renameCategory() returned', result);
       if (result.ok){
         row.setAttribute('data-name', e.target.value.trim());
         setCategoryModalStatus('Renamed "' + name + '" to "' + e.target.value.trim() + '".', 'ok');
@@ -3402,7 +3500,11 @@ document.addEventListener('DOMContentLoaded', function(){
     // assignMissingCategoriesToNew() ran, making it think every post
     // was missing a category and bulk-overwriting all of them to
     // "*New" in Supabase. Booting exactly once eliminates that race.
-    if (bootedOnce) return;
+    if (bootedOnce){
+      dlog('boot(): already booted, ignoring (this is expected -- Supabase re-validates the session, and fires another SIGNED_IN event, every time the tab regains focus)');
+      return;
+    }
+    dlog('boot(): starting -- full load of all 7 tables');
     bootedOnce = true;
     setImportStatus('Connecting to Supabase…');
     initDatabase().then(function(){
@@ -3445,6 +3547,7 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 
   sb.auth.onAuthStateChange(function(event){
+    dlog('onAuthStateChange event:', event);
     if (event === 'SIGNED_IN') boot();
   });
   boot();
