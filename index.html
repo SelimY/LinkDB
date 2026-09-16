@@ -1030,7 +1030,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.3</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.4</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
@@ -1042,9 +1042,7 @@ tbody td{
         </span>
       </button>
       <button id="refreshBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Refresh / reset page" title="Refresh / reset page" data-always-enabled>&#x27F3;</button>
-      <button id="importBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Import new links" title="Import new links" hidden>
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M12 3.5v11m0 0-4-4m4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 16.5v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
+      <button id="importBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Import new links" title="Import new links" hidden>&#x2B07;</button>
       <button id="logoutBtn" type="button" class="import-btn icon-btn topbar-icon-btn" aria-label="Sign out" title="Sign out" data-always-enabled hidden>&#x23FB;</button>
     </div>
   </div>
@@ -2202,6 +2200,16 @@ document.addEventListener('DOMContentLoaded', function(){
   });
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape' && !categoryModalOverlay.hidden) closeCategoryModal();
+  });
+
+  categoryManageListEl.addEventListener('keydown', function(e){
+    if (e.key !== 'Enter') return;
+    if (e.target.classList.contains('cat-name-input')){
+      // Text inputs only fire 'change' on blur, not on Enter -- force it
+      // so Enter commits the rename the same way clicking away does.
+      e.preventDefault();
+      e.target.blur();
+    }
   });
 
   categoryManageListEl.addEventListener('change', function(e){
