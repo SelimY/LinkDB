@@ -1030,7 +1030,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.9</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.10</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
@@ -2353,13 +2353,41 @@ document.addEventListener('DOMContentLoaded', function(){
     if (e.key === 'Escape' && !categoryModalOverlay.hidden) closeCategoryModal();
   });
 
+  function commitCategoryNameInput(input, source){
+    var row = input.closest('.cat-manage-row');
+    if (!row){
+      dlog('commitCategoryNameInput (' + source + '): no .cat-manage-row ancestor found for input', input);
+      return;
+    }
+    var name = row.getAttribute('data-name');
+    dlog('commitCategoryNameInput (' + source + '): row data-name =', name, ', input value =', JSON.stringify(input.value));
+    var result = renameCategory(name, input.value);
+    dlog('commitCategoryNameInput (' + source + '): renameCategory() returned', result);
+    if (result.ok){
+      row.setAttribute('data-name', input.value.trim());
+      setCategoryModalStatus('Renamed "' + name + '" to "' + input.value.trim() + '".', 'ok');
+      refreshCategoriesAndChips();
+      renderCategoryManageList();
+    } else if (result.reason === 'duplicate'){
+      input.value = name;
+      setCategoryModalStatus('A category named "' + input.value + '" already exists.', 'error');
+    } else if (result.reason !== 'unchanged'){
+      input.value = name;
+      setCategoryModalStatus('Could not rename that category.', 'error');
+    }
+  }
+
   categoryManageListEl.addEventListener('keydown', function(e){
     if (e.key !== 'Enter') return;
     if (e.target.classList.contains('cat-name-input')){
-      dlog('cat-name-input: Enter pressed, current value =', JSON.stringify(e.target.value), '-- forcing blur to commit');
-      // Text inputs only fire 'change' on blur, not on Enter -- force it
-      // so Enter commits the rename the same way clicking away does.
+      dlog('cat-name-input: Enter pressed, current value =', JSON.stringify(e.target.value), '-- committing directly (not relying on blur/change)');
+      // Committing via change-on-blur turned out to be unreliable here --
+      // the debug log showed nothing past this point and Supabase never
+      // received the PATCH, meaning 'change' just wasn't firing after a
+      // programmatic blur() in this context. Enter now calls the same
+      // commit logic directly instead of depending on that event.
       e.preventDefault();
+      commitCategoryNameInput(e.target, 'Enter');
       e.target.blur();
     }
   });
@@ -2386,21 +2414,10 @@ document.addEventListener('DOMContentLoaded', function(){
     }
 
     if (e.target.classList.contains('cat-name-input')){
-      dlog('cat-name-input: change event fired, row data-name =', name, ', input value =', JSON.stringify(e.target.value));
-      var result = renameCategory(name, e.target.value);
-      dlog('cat-name-input: renameCategory() returned', result);
-      if (result.ok){
-        row.setAttribute('data-name', e.target.value.trim());
-        setCategoryModalStatus('Renamed "' + name + '" to "' + e.target.value.trim() + '".', 'ok');
-        refreshCategoriesAndChips();
-        renderCategoryManageList();
-      } else if (result.reason === 'duplicate'){
-        e.target.value = name;
-        setCategoryModalStatus('A category named "' + e.target.value + '" already exists.', 'error');
-      } else if (result.reason !== 'unchanged'){
-        e.target.value = name;
-        setCategoryModalStatus('Could not rename that category.', 'error');
-      }
+      // Still handled here too, for the normal case of clicking/tabbing
+      // away from the input without pressing Enter first.
+      dlog('cat-name-input: change event fired (blur without Enter)');
+      commitCategoryNameInput(e.target, 'change');
     }
   });
 
