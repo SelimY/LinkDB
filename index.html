@@ -1030,7 +1030,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.4</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.5</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
@@ -1336,10 +1336,10 @@ document.addEventListener('DOMContentLoaded', function(){
     var trimmed = String(noteText || '').trim();
     if (!trimmed){
       delete POST_NOTES[postId];
-      sb.from('post_notes').delete().eq('post_id', postId).then(logSbError);
+      sbWrite('post_notes').delete().eq('post_id', postId).then(logSbError);
     } else {
       POST_NOTES[postId] = trimmed;
-      sb.from('post_notes').upsert({ post_id: postId, note: trimmed }).then(logSbError);
+      sbWrite('post_notes').upsert({ post_id: postId, note: trimmed }).then(logSbError);
     }
     var post = postsById[postId];
     if (post) post.note = trimmed;
@@ -1348,7 +1348,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
   function deletePostNote(postId){
     delete POST_NOTES[postId];
-    sb.from('post_notes').delete().eq('post_id', postId).then(logSbError);
+    sbWrite('post_notes').delete().eq('post_id', postId).then(logSbError);
     var post = postsById[postId];
     if (post) post.note = '';
     persistDb();
@@ -1370,7 +1370,30 @@ document.addEventListener('DOMContentLoaded', function(){
   var POST_NOTES = {};    // post_id -> note
   var META = {};
 
+  /* ---------- Pending-write tracking ----------
+     Every write (rename, tag add, hide, etc.) updates the in-memory UI
+     immediately and pushes to Supabase in the background -- fast, but it
+     means a write that hasn't finished yet is invisible to the user. If
+     they reload or close the tab right after an edit, the in-flight
+     request can get cut off before Supabase ever receives it, and the
+     change is silently lost even though it looked saved. sbWrite() counts
+     requests as they start; logSbError() (every write's terminal
+     handler) counts them back down; beforeunload warns while any are
+     still outstanding. */
+  var pendingWrites = 0;
+  function sbWrite(table){
+    pendingWrites++;
+    return sb.from(table);
+  }
+  window.addEventListener('beforeunload', function(e){
+    if (pendingWrites > 0){
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
   function logSbError(res){
+    pendingWrites = Math.max(0, pendingWrites - 1);
     if (res && res.error){
       setImportStatus('Sync error: ' + res.error.message, 'error');
     }
@@ -1433,7 +1456,7 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   function setMeta(key, value){
     META[key] = value;
-    sb.from('meta').upsert({ key: key, value: value }).then(logSbError);
+    sbWrite('meta').upsert({ key: key, value: value }).then(logSbError);
   }
 
   function loadCategoriesFromDb(){
@@ -1475,7 +1498,7 @@ document.addEventListener('DOMContentLoaded', function(){
     }
     toFix.forEach(function(postId){ POST_CATEGORY[postId] = catId; });
     if (toFix.length){
-      sb.from('post_category').upsert(toFix.map(function(postId){ return { post_id: postId, category_id: catId }; })).then(logSbError);
+      sbWrite('post_category').upsert(toFix.map(function(postId){ return { post_id: postId, category_id: catId }; })).then(logSbError);
     }
   }
 
@@ -1543,15 +1566,15 @@ document.addEventListener('DOMContentLoaded', function(){
       tagId = nextLocalId(TAGS, 'tag_id');
       canonicalName = candidate;
       TAGS.push({ tag_id: tagId, name: canonicalName, usage_count: 0 });
-      sb.from('tags').insert({ tag_id: tagId, name: canonicalName, usage_count: 0 }).then(logSbError);
+      sbWrite('tags').insert({ tag_id: tagId, name: canonicalName, usage_count: 0 }).then(logSbError);
     }
     var already = POST_TAGS.some(function(pt){ return pt.post_id === postId && pt.tag_id === tagId; });
     if (!already){
       POST_TAGS.push({ post_id: postId, tag_id: tagId });
       existing = TAGS.filter(function(t){ return t.tag_id === tagId; })[0];
       if (existing) existing.usage_count = (existing.usage_count || 0) + 1;
-      sb.from('post_tags').insert({ post_id: postId, tag_id: tagId }).then(logSbError);
-      sb.from('tags').update({ usage_count: existing ? existing.usage_count : 1 }).eq('tag_id', tagId).then(logSbError);
+      sbWrite('post_tags').insert({ post_id: postId, tag_id: tagId }).then(logSbError);
+      sbWrite('tags').update({ usage_count: existing ? existing.usage_count : 1 }).eq('tag_id', tagId).then(logSbError);
     }
     var post = postsById[postId];
     if (post && post.tags.indexOf(canonicalName) === -1) post.tags.push(canonicalName);
@@ -1563,13 +1586,13 @@ document.addEventListener('DOMContentLoaded', function(){
     var tag = TAGS.filter(function(t){ return t.name.toLowerCase() === String(tagName).toLowerCase(); })[0];
     if (!tag) return;
     POST_TAGS = POST_TAGS.filter(function(pt){ return !(pt.post_id === postId && pt.tag_id === tag.tag_id); });
-    sb.from('post_tags').delete().eq('post_id', postId).eq('tag_id', tag.tag_id).then(logSbError);
+    sbWrite('post_tags').delete().eq('post_id', postId).eq('tag_id', tag.tag_id).then(logSbError);
     tag.usage_count = Math.max(0, (tag.usage_count || 0) - 1);
     if (tag.usage_count <= 0){
       TAGS = TAGS.filter(function(t){ return t.tag_id !== tag.tag_id; });
-      sb.from('tags').delete().eq('tag_id', tag.tag_id).then(logSbError);
+      sbWrite('tags').delete().eq('tag_id', tag.tag_id).then(logSbError);
     } else {
-      sb.from('tags').update({ usage_count: tag.usage_count }).eq('tag_id', tag.tag_id).then(logSbError);
+      sbWrite('tags').update({ usage_count: tag.usage_count }).eq('tag_id', tag.tag_id).then(logSbError);
     }
     var post = postsById[postId];
     if (post) post.tags = post.tags.filter(function(t){ return t.toLowerCase() !== String(tagName).toLowerCase(); });
@@ -1580,7 +1603,7 @@ document.addEventListener('DOMContentLoaded', function(){
     var dead = TAGS.filter(function(t){ return (t.usage_count || 0) <= 0; });
     if (!dead.length) return;
     TAGS = TAGS.filter(function(t){ return (t.usage_count || 0) > 0; });
-    dead.forEach(function(t){ sb.from('tags').delete().eq('tag_id', t.tag_id).then(logSbError); });
+    dead.forEach(function(t){ sbWrite('tags').delete().eq('tag_id', t.tag_id).then(logSbError); });
   }
 
   function purgePost(postId){
@@ -1589,17 +1612,17 @@ document.addEventListener('DOMContentLoaded', function(){
       var tag = TAGS.filter(function(t){ return t.tag_id === tid; })[0];
       if (tag){
         tag.usage_count = Math.max(0, (tag.usage_count || 0) - 1);
-        sb.from('tags').update({ usage_count: tag.usage_count }).eq('tag_id', tid).then(logSbError);
+        sbWrite('tags').update({ usage_count: tag.usage_count }).eq('tag_id', tid).then(logSbError);
       }
     });
     POST_TAGS = POST_TAGS.filter(function(pt){ return pt.post_id !== postId; });
     delete POST_CATEGORY[postId];
     delete POST_NOTES[postId];
     POSTS_RAW = POSTS_RAW.filter(function(p){ return p.post_id !== postId; });
-    sb.from('post_tags').delete().eq('post_id', postId).then(logSbError);
-    sb.from('post_category').delete().eq('post_id', postId).then(logSbError);
-    sb.from('post_notes').delete().eq('post_id', postId).then(logSbError);
-    sb.from('posts').delete().eq('post_id', postId).then(logSbError);
+    sbWrite('post_tags').delete().eq('post_id', postId).then(logSbError);
+    sbWrite('post_category').delete().eq('post_id', postId).then(logSbError);
+    sbWrite('post_notes').delete().eq('post_id', postId).then(logSbError);
+    sbWrite('posts').delete().eq('post_id', postId).then(logSbError);
     delete imageCache[postId];
     // Also remove the purged link's screenshot from GitHub (images/<id>.jpg),
     // via the same Edge Function "Renew" uses — the GitHub write token only
@@ -1642,8 +1665,8 @@ document.addEventListener('DOMContentLoaded', function(){
       }
     });
     CATEGORIES = CATEGORIES.filter(function(c){ return c.category_id !== cat.category_id; });
-    if (moved.length) sb.from('post_category').upsert(moved).then(logSbError);
-    sb.from('categories').delete().eq('category_id', cat.category_id).then(logSbError);
+    if (moved.length) sbWrite('post_category').upsert(moved).then(logSbError);
+    sbWrite('categories').delete().eq('category_id', cat.category_id).then(logSbError);
     persistDb();
   }
 
@@ -1656,7 +1679,7 @@ document.addEventListener('DOMContentLoaded', function(){
     var cat = CATEGORIES.filter(function(c){ return c.name === oldName; })[0];
     if (!cat) return { ok: false, reason: 'missing' };
     cat.name = trimmed;
-    sb.from('categories').update({ name: trimmed }).eq('category_id', cat.category_id).then(logSbError);
+    sbWrite('categories').update({ name: trimmed }).eq('category_id', cat.category_id).then(logSbError);
     persistDb();
     return { ok: true };
   }
@@ -1670,12 +1693,12 @@ document.addEventListener('DOMContentLoaded', function(){
       var catId = nextLocalId(CATEGORIES, 'category_id');
       cat = { category_id: catId, name: categoryName, default_visible: 1 };
       CATEGORIES.push(cat);
-      sb.from('categories').insert({ category_id: catId, name: categoryName, default_visible: true }).then(logSbError);
+      sbWrite('categories').insert({ category_id: catId, name: categoryName, default_visible: true }).then(logSbError);
     } else {
       cat = CATEGORIES.filter(function(c){ return c.name === categoryName; })[0];
     }
     POST_CATEGORY[postId] = cat.category_id;
-    sb.from('post_category').upsert({ post_id: postId, category_id: cat.category_id }).then(logSbError);
+    sbWrite('post_category').upsert({ post_id: postId, category_id: cat.category_id }).then(logSbError);
     persistDb();
     return categoryName;
   }
@@ -1683,7 +1706,7 @@ document.addEventListener('DOMContentLoaded', function(){
   function unassignPostCategory(postId){
     var newId = ensureNewCategory();
     POST_CATEGORY[postId] = newId;
-    sb.from('post_category').upsert({ post_id: postId, category_id: newId }).then(logSbError);
+    sbWrite('post_category').upsert({ post_id: postId, category_id: newId }).then(logSbError);
     persistDb();
   }
 
@@ -1875,7 +1898,7 @@ document.addEventListener('DOMContentLoaded', function(){
     if (id != null) return id;
     id = nextLocalId(CATEGORIES, 'category_id');
     CATEGORIES.push({ category_id: id, name: '*New', default_visible: 1 });
-    sb.from('categories').insert({ category_id: id, name: '*New', default_visible: true }).then(logSbError);
+    sbWrite('categories').insert({ category_id: id, name: '*New', default_visible: true }).then(logSbError);
     return id;
   }
 
@@ -1927,8 +1950,8 @@ document.addEventListener('DOMContentLoaded', function(){
       added++;
     });
 
-    if (newPosts.length) sb.from('posts').insert(newPosts).then(logSbError);
-    if (newPostCats.length) sb.from('post_category').upsert(newPostCats).then(logSbError);
+    if (newPosts.length) sbWrite('posts').insert(newPosts).then(logSbError);
+    if (newPostCats.length) sbWrite('post_category').upsert(newPostCats).then(logSbError);
 
     setMeta('has_ever_imported', 'true');
 
@@ -2221,7 +2244,7 @@ document.addEventListener('DOMContentLoaded', function(){
       var cat = CATEGORIES.filter(function(c){ return c.name === name; })[0];
       if (cat){
         cat.default_visible = e.target.checked ? 1 : 0;
-        sb.from('categories').update({ default_visible: !!e.target.checked }).eq('category_id', cat.category_id).then(logSbError);
+        sbWrite('categories').update({ default_visible: !!e.target.checked }).eq('category_id', cat.category_id).then(logSbError);
       }
       persistDb();
       setCategoryModalStatus('Updated default visibility for "' + name + '" (applies to new sessions).', 'ok');
@@ -2267,7 +2290,7 @@ document.addEventListener('DOMContentLoaded', function(){
     }
     var id = nextLocalId(CATEGORIES, 'category_id');
     CATEGORIES.push({ category_id: id, name: name, default_visible: 1 });
-    sb.from('categories').insert({ category_id: id, name: name, default_visible: true }).then(logSbError);
+    sbWrite('categories').insert({ category_id: id, name: name, default_visible: true }).then(logSbError);
     newCategoryNameInput.value = '';
     setCategoryModalStatus('Added category "' + name + '".', 'ok');
     refreshCategoriesAndChips();
@@ -2924,7 +2947,7 @@ document.addEventListener('DOMContentLoaded', function(){
     var trimmed = String(newUrl || '').trim();
     var raw = POSTS_RAW.filter(function(p){ return p.post_id === postId; })[0];
     if (raw) raw.url = trimmed;
-    sb.from('posts').update({ url: trimmed }).eq('post_id', postId).then(logSbError);
+    sbWrite('posts').update({ url: trimmed }).eq('post_id', postId).then(logSbError);
     var post = postsById[postId];
     if (post) post.url = trimmed;
     persistDb();
@@ -2981,7 +3004,7 @@ document.addEventListener('DOMContentLoaded', function(){
     var trimmed = String(newTitle || '').trim();
     var raw = POSTS_RAW.filter(function(p){ return p.post_id === postId; })[0];
     if (raw) raw.title = trimmed;
-    sb.from('posts').update({ title: trimmed }).eq('post_id', postId).then(logSbError);
+    sbWrite('posts').update({ title: trimmed }).eq('post_id', postId).then(logSbError);
     var post = postsById[postId];
     if (post) post.title = trimmed;
     persistDb();
@@ -3251,7 +3274,7 @@ document.addEventListener('DOMContentLoaded', function(){
       if (!window.confirm(confirmMsg)) return;
       var hideRaw = POSTS_RAW.filter(function(p){ return p.post_id === hidePid; })[0];
       if (hideRaw) hideRaw.hidden = !restoring;
-      sb.from('posts').update({ hidden: !restoring }).eq('post_id', hidePid).then(logSbError);
+      sbWrite('posts').update({ hidden: !restoring }).eq('post_id', hidePid).then(logSbError);
       persistDb();
       refreshPostsFromDB();
       renderCategoryChips();
