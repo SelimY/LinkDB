@@ -1030,7 +1030,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.5</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.6</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
@@ -1558,23 +1558,34 @@ document.addEventListener('DOMContentLoaded', function(){
     var candidate = normalizeTag(rawTag);
     if (!candidate) return null;
     var existing = TAGS.filter(function(t){ return t.name.toLowerCase() === candidate.toLowerCase(); })[0];
-    var tagId, canonicalName;
+    var tagId, canonicalName, tagIsNew = false;
     if (existing){
       tagId = existing.tag_id;
       canonicalName = existing.name;
     } else {
       tagId = nextLocalId(TAGS, 'tag_id');
       canonicalName = candidate;
-      TAGS.push({ tag_id: tagId, name: canonicalName, usage_count: 0 });
-      sbWrite('tags').insert({ tag_id: tagId, name: canonicalName, usage_count: 0 }).then(logSbError);
+      tagIsNew = true;
     }
     var already = POST_TAGS.some(function(pt){ return pt.post_id === postId && pt.tag_id === tagId; });
-    if (!already){
+
+    if (tagIsNew){
+      // Brand-new tag: insert it with usage_count already at 1 (this link
+      // is its first use) and only THEN insert the post_tags row, chained
+      // on the tags insert's promise. Firing both inserts at once was a
+      // race -- if post_tags reached Postgres before the tags row it
+      // references had committed, the foreign key check failed with
+      // "violates foreign key constraint post_tags_tag_id_fkey".
+      TAGS.push({ tag_id: tagId, name: canonicalName, usage_count: 1 });
       POST_TAGS.push({ post_id: postId, tag_id: tagId });
-      existing = TAGS.filter(function(t){ return t.tag_id === tagId; })[0];
-      if (existing) existing.usage_count = (existing.usage_count || 0) + 1;
+      sbWrite('tags').insert({ tag_id: tagId, name: canonicalName, usage_count: 1 }).then(logSbError).then(function(){
+        sbWrite('post_tags').insert({ post_id: postId, tag_id: tagId }).then(logSbError);
+      });
+    } else if (!already){
+      POST_TAGS.push({ post_id: postId, tag_id: tagId });
+      existing.usage_count = (existing.usage_count || 0) + 1;
       sbWrite('post_tags').insert({ post_id: postId, tag_id: tagId }).then(logSbError);
-      sbWrite('tags').update({ usage_count: existing ? existing.usage_count : 1 }).eq('tag_id', tagId).then(logSbError);
+      sbWrite('tags').update({ usage_count: existing.usage_count }).eq('tag_id', tagId).then(logSbError);
     }
     var post = postsById[postId];
     if (post && post.tags.indexOf(canonicalName) === -1) post.tags.push(canonicalName);
@@ -1693,12 +1704,18 @@ document.addEventListener('DOMContentLoaded', function(){
       var catId = nextLocalId(CATEGORIES, 'category_id');
       cat = { category_id: catId, name: categoryName, default_visible: 1 };
       CATEGORIES.push(cat);
-      sbWrite('categories').insert({ category_id: catId, name: categoryName, default_visible: true }).then(logSbError);
+      POST_CATEGORY[postId] = cat.category_id;
+      // Same ordering fix as addTagToPost: don't link the post to a
+      // brand-new category until that category's own insert has actually
+      // committed, or post_category's foreign key check can fail.
+      sbWrite('categories').insert({ category_id: catId, name: categoryName, default_visible: true }).then(logSbError).then(function(){
+        sbWrite('post_category').upsert({ post_id: postId, category_id: cat.category_id }).then(logSbError);
+      });
     } else {
       cat = CATEGORIES.filter(function(c){ return c.name === categoryName; })[0];
+      POST_CATEGORY[postId] = cat.category_id;
+      sbWrite('post_category').upsert({ post_id: postId, category_id: cat.category_id }).then(logSbError);
     }
-    POST_CATEGORY[postId] = cat.category_id;
-    sbWrite('post_category').upsert({ post_id: postId, category_id: cat.category_id }).then(logSbError);
     persistDb();
     return categoryName;
   }
@@ -1950,8 +1967,16 @@ document.addEventListener('DOMContentLoaded', function(){
       added++;
     });
 
-    if (newPosts.length) sbWrite('posts').insert(newPosts).then(logSbError);
-    if (newPostCats.length) sbWrite('post_category').upsert(newPostCats).then(logSbError);
+    if (newPosts.length){
+      // Same fix as addTagToPost/assignCategoryInline: post_category rows
+      // reference posts.post_id via a foreign key, so they can't be
+      // written until the posts insert they depend on has committed.
+      sbWrite('posts').insert(newPosts).then(logSbError).then(function(){
+        if (newPostCats.length) sbWrite('post_category').upsert(newPostCats).then(logSbError);
+      });
+    } else if (newPostCats.length){
+      sbWrite('post_category').upsert(newPostCats).then(logSbError);
+    }
 
     setMeta('has_ever_imported', 'true');
 
