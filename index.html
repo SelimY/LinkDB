@@ -1030,7 +1030,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.7</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.8</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
@@ -1260,6 +1260,7 @@ document.addEventListener('DOMContentLoaded', function(){
   var POSTS = [];
   var postsById = {};
   var imageCache = {}; // post_id -> array of found image paths (populated lazily)
+  var imageCacheBust = {}; // post_id -> timestamp, set after a successful Renew (see imagePath)
   var hasImported = false;
 
   var state = {
@@ -1437,7 +1438,18 @@ document.addEventListener('DOMContentLoaded', function(){
       sb.from('post_notes').select('*'),
       sb.from('meta').select('*')
     ]).then(function(results){
-      results.forEach(logSbError);
+      // If ANY of the seven reads failed (e.g. a single request landing
+      // mid-token-refresh got a transient 401), bail out before touching
+      // any in-memory table -- a partial load is worse than no load: it
+      // used to leave e.g. POST_CATEGORY empty while everything else
+      // looked fine, which the "missing category" repair then read as
+      // every post having lost its category. logSbError() isn't used
+      // here since these are reads, not writes -- it also tracks
+      // pending-write count, which these seven calls never incremented.
+      var failed = results.filter(function(r){ return r.error; });
+      if (failed.length){
+        throw new Error('Failed to load ' + failed.length + ' table(s) from Supabase: ' + failed.map(function(r){ return r.error.message; }).join('; '));
+      }
       CATEGORIES = results[0].data || [];
       TAGS = results[1].data || [];
       POST_TAGS = results[2].data || [];
@@ -2103,6 +2115,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
     sb.functions.invoke('renew-image', { body: { id: post.pid, url: post.url } }).then(function(res){
       if (res.error) throw res.error;
+      imageCacheBust[post.pid] = Date.now();
       delete imageCache[post.pid];
       var row = postsBody.querySelector('tr[data-pid="' + CSS.escape(post.pid) + '"]');
       if (row){
@@ -2801,7 +2814,15 @@ document.addEventListener('DOMContentLoaded', function(){
      per link, written by "Renew", which commits it via the Edge
      Function). */
   function imagePath(post){
-    return GITHUB_RAW_BASE + '/' + post.pid + '.jpg';
+    var base = GITHUB_RAW_BASE + '/' + post.pid + '.jpg';
+    // raw.githubusercontent.com sits behind a CDN that caches each exact
+    // URL for a few minutes -- after Renew commits a fresh image under
+    // the SAME filename, the old cached bytes keep being served unless
+    // the URL itself changes. renewLinkImage() sets a bust value here
+    // right after a successful renew so that post's next render uses a
+    // fresh URL; everything else stays cacheable as before.
+    var bust = imageCacheBust[post.pid];
+    return bust ? (base + '?v=' + bust) : base;
   }
 
   function checkImage(post){
@@ -3405,10 +3426,21 @@ document.addEventListener('DOMContentLoaded', function(){
         bootedOnce = false; // not actually booted -- let a later SIGNED_IN event try again
         return; // sign-in overlay is already showing
       }
-      setImportStatus('Database initialization failed: ' + (err && err.message ? err.message : err), 'error');
+      // Do NOT reset bootedOnce here. Supabase's client re-validates the
+      // session (and fires another 'SIGNED_IN' event) every time the tab
+      // regains focus -- normal, harmless behaviour on its own. But if a
+      // transient failure (a single request mid-token-refresh, a network
+      // blip) reset the flag, EVERY later focus event would silently
+      // re-run boot() and re-fetch all seven tables from scratch, racing
+      // whatever the user is actively doing (editing a name, adding a
+      // tag) and occasionally flashing categories back to defaults if
+      // that reload itself hit a hiccup. One clean load per page load is
+      // what we want; a genuine failure here is best recovered from with
+      // an explicit reload (the Refresh button), not an invisible retry
+      // loop.
+      setImportStatus('Database initialization failed: ' + (err && err.message ? err.message : err) + ' -- try the refresh button.', 'error');
       setAllControlsDisabled(false);
       initialLoadingOverlay.hidden = true;
-      bootedOnce = false; // allow a retry (e.g. after the user signs in)
     });
   }
 
