@@ -576,10 +576,11 @@ tbody td{
 .visual-frame.missing{
   background: repeating-linear-gradient(135deg, var(--surface-2), var(--surface-2) 8px, var(--bg) 8px, var(--bg) 16px);
   opacity:.55;
-  cursor:default;
+  cursor:pointer;
 }
+.visual-frame.missing:hover{ opacity:.8; }
 .visual-frame.missing::after{
-  content:"Image not found";
+  content:"Image not found — click to retry";
   position:absolute; inset:0;
   display:flex; align-items:center; justify-content:center;
   text-align:center; font-size:11px; font-family:var(--font-mono);
@@ -1030,7 +1031,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.10</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.11</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
@@ -3308,7 +3309,7 @@ document.addEventListener('DOMContentLoaded', function(){
     frameEl.classList.remove('loading');
     if (!path){
       frameEl.classList.add('missing');
-      frameEl.title = 'Image not found: ' + pid + '.jpg';
+      frameEl.title = 'Image not found: ' + pid + '.jpg (click to retry)';
       frameEl.innerHTML = '';
       return;
     }
@@ -3330,6 +3331,23 @@ document.addEventListener('DOMContentLoaded', function(){
       imageCache[pid] = path;
       renderVisualInto(frameEl, pid, path);
     });
+  }
+
+  /* Re-probe a link's image on demand -- used when the user clicks a
+     frame that's showing "Image not found": the image may have been
+     added since the page loaded (e.g. Renew ran, or the file just
+     wasn't there yet the first time this row was checked), so it's
+     worth trying again instead of trusting the cached "missing"
+     result forever. */
+  function retryVisualFrame(frameEl){
+    var pid = frameEl.getAttribute('data-pid');
+    if (!pid) return;
+    dlog('retryVisualFrame: re-probing image for', pid);
+    delete imageCache[pid];
+    frameEl.classList.remove('missing');
+    frameEl.classList.add('loading');
+    frameEl.innerHTML = '';
+    initVisualFrame(frameEl);
   }
 
   function initVisualFrames(scopeRows){
@@ -3473,7 +3491,11 @@ document.addEventListener('DOMContentLoaded', function(){
     if (visualFrame){
       var visualPid = visualFrame.getAttribute('data-pid');
       var visualPath = imageCache[visualPid];
-      if (visualPath) openImageModal(visualPath);
+      if (visualPath){
+        openImageModal(visualPath);
+      } else if (visualFrame.classList.contains('missing')){
+        retryVisualFrame(visualFrame);
+      }
       return;
     }
 
