@@ -1031,7 +1031,7 @@ tbody td{
   <div class="topbar-inner">
     <div class="brand">
       <span class="brand-mark">◎</span>
-      <span class="brand-text">LinkDB<span class="brand-version">v2.11</span></span>
+      <span class="brand-text">LinkDB<span class="brand-version">v2.12</span></span>
     </div>
     <div class="topbar-right">
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" data-always-enabled>
@@ -1214,7 +1214,6 @@ document.addEventListener('DOMContentLoaded', function(){
   var SUPABASE_URL = 'https://euiwhytxocwcpuhozqxa.supabase.co';
   var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1aXdoeXR4b2N3Y3B1aG96cXhhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0MzU1MTcsImV4cCI6MjEwNTAxMTUxN30.31WtcbHzX5W4WY7etzbwkqkIU_Q6vL18c7jzV5KUsi4';
   var GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/SelimY/LinkDB/main/images';
-  var ALLOWED_EMAIL = 'yanniers@gmail.com';
   var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var currentUser = null;
 
@@ -1841,9 +1840,11 @@ document.addEventListener('DOMContentLoaded', function(){
 
   /* ---------- Auth + init (Supabase v1.0) ----------
      Replaces the old File System Access "connect/create/reconnect a local
-     .sqlite file" flow. Access is gated by Google OAuth; Supabase RLS
-     additionally restricts every table to ALLOWED_EMAIL only, so a signed-in
-     user who isn't yanniers@gmail.com will simply see an empty database. */
+     .sqlite file" flow. Access is gated by Google OAuth, and the real
+     authorization lives server-side: Supabase RLS policies on every table
+     only allow the owner's account, so any other signed-in user simply
+     gets empty results. (No email address is hard-coded in this public
+     file on purpose -- the allow-list exists only in the database.) */
   var signInOverlay = document.createElement('div');
   signInOverlay.className = 'init-loading-overlay';
   // Leave room for the topbar at the top instead of covering the full
@@ -1907,8 +1908,8 @@ document.addEventListener('DOMContentLoaded', function(){
   function initDatabase(){
     return sb.auth.getSession().then(function(res){
       var session = res.data && res.data.session;
-      dlog('initDatabase: getSession() ->', session ? ('signed in as ' + session.user.email) : 'no session');
-      if (!session || !session.user || session.user.email !== ALLOWED_EMAIL){
+      dlog('initDatabase: getSession() ->', session ? 'signed in' : 'no session');
+      if (!session || !session.user){
         showSignIn();
         return Promise.reject(new Error('not-signed-in'));
       }
